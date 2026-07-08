@@ -219,7 +219,13 @@ export function SettingsForm({ settings, onChange, disabled }: SettingsFormProps
 
           <AccordionItem value="activity">
             <AccordionTrigger>Activity simulation</AccordionTrigger>
-            <AccordionContent className="grid gap-4 lg:grid-cols-2">
+            <AccordionContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Jira Cloud does not allow backdating changelog history via the API. Comments, transitions,
+                and reassignments are stamped at seed time. Only worklog started dates use &quot;Days of
+                history&quot;.
+              </p>
+              <div className="grid gap-4 lg:grid-cols-2">
               {([
                 ["maxCommentsPerIssue", "Max comments"],
                 ["maxWorklogsPerIssue", "Max worklogs"],
@@ -247,6 +253,7 @@ export function SettingsForm({ settings, onChange, disabled }: SettingsFormProps
                   onChange={(e) => onChange({ epicChurnProb: Number(e.target.value) })}
                 />
               </Field>
+              </div>
             </AccordionContent>
           </AccordionItem>
 

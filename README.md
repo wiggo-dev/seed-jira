@@ -123,10 +123,12 @@ If cleanup fails partway through, delete `.seed-jira-ssp-state.json` and re-run,
 **Per issue activity (randomised):**
 
 - Comments
-- Backdated worklogs (simulates history over `--days-of-history` days)
+- Backdated worklogs (`--days-of-history` sets how far back worklog **started** dates go)
 - Status transitions (best-effort, depends on your workflow)
 - Optional reassignment (`--reassign-prob`)
 - Optional epic churn: remove from epic, move to another epic, or remove then re-link (`--epic-churn-prob`, default 0.1). Uses Jira Cloud `parent` when available, otherwise Epic Link.
+
+**History / changelog timestamps:** Jira Cloud does not let the REST API set issue created dates or backdate changelog entries. Comments, transitions, reassignments, and epic changes are recorded at seed time. Only worklog **started** dates are backdated; the issue History tab will still show most activity clustered around when you ran the seeder.
 
 **Defaults** (override with flags):
 
@@ -232,7 +234,7 @@ node seed-jira-ssp.mjs --delete-seeded --delete-artifacts --yes
 | `--issues-per-epic <n>` | Child issues per epic |
 | `--max-comments <n>` | Max comments per issue |
 | `--max-worklogs <n>` | Max worklogs per issue |
-| `--days-of-history <n>` | How far back to backdate worklogs |
+| `--days-of-history <n>` | How far back to set worklog **started** dates (does not backdate changelog timestamps) |
 | `--sleep-ms <n>` | Delay between API calls (rate limiting) |
 | `--verbose`, `-v` | Show every dry-run API call (default: progress bars only) |
 
@@ -286,6 +288,6 @@ The checkpoint stores per-issue progress (creation, simulated activity, sprint a
 ## Notes
 
 - **User creation** is not supported. Invite users via Atlassian Admin, then use `--print-assignable-users` to get account IDs.
-- **Issue created dates** cannot be set on Jira Cloud. History is simulated via comments, worklogs, transitions, and reassignments.
+- **Issue created dates** and **changelog timestamps** cannot be set on Jira Cloud via the REST API. Activity is simulated via comments, worklogs, transitions, and reassignments, but only worklog started dates can be backdated (`--days-of-history`). Everything else in the issue History tab reflects when the seed run executed.
 - **Epics** are not placed in sprints; child issues are **Stories and Bugs** only.
 - Re-running is safe: existing versions and sprints with matching names are reused.
