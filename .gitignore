@@ -1,4 +1,5 @@
 node_modules/
 .env
 .seed-jira-ssp-state.json
+.seed-jira-run-checkpoint.json
 dist-ui/

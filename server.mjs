@@ -9,6 +9,10 @@ import {
   buildConfig,
   eventHooks,
   runSeed,
+  loadCheckpoint,
+  clearCheckpoint,
+  checkpointSummary,
+  isResumable,
 } from "./lib/seed-jira-core.mjs";
 
 const PORT = Number(process.env.SEED_UI_API_PORT || 3847);
@@ -277,6 +281,16 @@ app.get("/api/runs/active", (_req, res) => {
   });
 });
 
+app.get("/api/checkpoint", (_req, res) => {
+  const checkpoint = loadCheckpoint();
+  res.json(checkpointSummary(checkpoint));
+});
+
+app.delete("/api/checkpoint", (_req, res) => {
+  clearCheckpoint();
+  res.json({ ok: true });
+});
+
 app.post("/api/runs", async (req, res) => {
   if (activeRunId) {
     const active = runs.get(activeRunId);
@@ -285,33 +299,39 @@ app.post("/api/runs", async (req, res) => {
     }
   }
 
+  const fresh = !!req.body?.fresh;
+  if (fresh) clearCheckpoint();
+
   const config = bodyToConfig(req.body);
-  const runId = crypto.randomUUID();
+  const existing = loadCheckpoint();
+  const resume = !fresh && isResumable(existing, config);
+  const runId = resume ? existing.runId : crypto.randomUUID();
   const controller = new AbortController();
 
   const run = {
     id: runId,
     status: "running",
     mode: config.mode,
-    startedAt: new Date().toISOString(),
+    startedAt: resume ? existing.startedAt : new Date().toISOString(),
     finishedAt: null,
     exitCode: null,
     summary: null,
     error: null,
-    events: [],
+    events: resume ? [...(existing.events || [])] : [],
     subscribers: new Set(),
     controller,
+    resumed: resume,
   };
 
   runs.set(runId, run);
   activeRunId = runId;
 
-  res.json({ runId });
+  res.json({ runId, resumed: resume });
 
   const hooks = eventHooks((event) => broadcast(run, event));
 
   try {
-    const summary = await runSeed(config, hooks, { signal: controller.signal });
+    const summary = await runSeed(config, hooks, { signal: controller.signal, runId, fresh });
     run.status = "completed";
     run.summary = summary;
     run.exitCode = 0;

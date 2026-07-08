@@ -64,6 +64,21 @@ export interface ActiveRunResponse {
   startedAt?: string;
 }
 
+export interface CheckpointResponse {
+  resumable: boolean;
+  status?: string;
+  runId?: string;
+  startedAt?: string;
+  updatedAt?: string;
+  mode?: string;
+  dryRun?: boolean;
+  position?: { pi: number; epic: number; child: number };
+  phase?: string;
+  counters?: { createdCount: number; activityCount: number; sprintAssignCount: number };
+  events?: SeedEvent[];
+  configSummary?: Record<string, unknown>;
+}
+
 export interface DefaultsResponse {
   defaults: Partial<Settings>;
   fieldMeta: Record<string, { label: string; type: string; group: string }>;

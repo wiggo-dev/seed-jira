@@ -1,4 +1,4 @@
-import type { ActiveRunResponse, DefaultsResponse, EnvStatus, RunMode, Settings } from "./types";
+import type { ActiveRunResponse, CheckpointResponse, DefaultsResponse, EnvStatus, RunMode, Settings } from "./types";
 
 const SETTINGS_KEY = "seed-jira-settings";
 
@@ -140,11 +140,25 @@ export async function fetchActiveRun(): Promise<ActiveRunResponse> {
   return res.json();
 }
 
-export async function startRun(payload: Record<string, unknown>) {
+export async function fetchCheckpoint(): Promise<CheckpointResponse> {
+  const res = await fetch("/api/checkpoint");
+  if (!res.ok) throw new Error("Failed to fetch checkpoint");
+  return res.json();
+}
+
+export async function clearCheckpoint() {
+  const res = await fetch("/api/checkpoint", { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to clear checkpoint");
+}
+
+export async function startRun(
+  payload: Record<string, unknown>,
+  options: { fresh?: boolean } = {}
+) {
   const res = await fetch("/api/runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, fresh: options.fresh ?? false }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -156,7 +170,7 @@ export async function startRun(payload: Record<string, unknown>) {
     err.statusCode = res.status;
     throw err;
   }
-  return res.json() as Promise<{ runId: string }>;
+  return res.json() as Promise<{ runId: string; resumed?: boolean }>;
 }
 
 export async function cancelRun(runId: string) {

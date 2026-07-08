@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Play, FlaskConical, Trash2, Users, UsersRound, Square } from "lucide-react";
+import { Play, FlaskConical, Trash2, Users, UsersRound, Square, RotateCcw } from "lucide-react";
 import { ModeToggle } from "@/components/mode-toggle";
 import { ProgressPanel } from "@/components/ProgressPanel";
 import { SettingsForm } from "@/components/SettingsForm";
@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
   cancelRun,
+  clearCheckpoint,
+  fetchCheckpoint,
   fetchDefaults,
   fetchEnvStatus,
   fetchActiveRun,
@@ -18,7 +20,34 @@ import {
   startRun,
   subscribeRunEvents,
 } from "@/lib/api";
-import type { EnvStatus, RunMode, RunStatus, SeedEvent, Settings } from "@/lib/types";
+import type { CheckpointResponse, EnvStatus, RunMode, RunStatus, SeedEvent, Settings } from "@/lib/types";
+
+function hydrateFromEvents(events: SeedEvent[]) {
+  let currentSection: string | undefined;
+  let progress:
+    | { label: string; current: number; total: number; detail?: string }
+    | undefined;
+
+  for (const event of events) {
+    if (event.type === "section") currentSection = event.title;
+    if (event.type === "progress") {
+      progress = {
+        label: event.label || "Progress",
+        current: event.current || 0,
+        total: event.total || 0,
+        detail: event.detail,
+      };
+    }
+  }
+
+  return { currentSection, progress };
+}
+
+function checkpointBannerText(checkpoint: CheckpointResponse) {
+  const pos = checkpoint.position || { pi: 1, epic: 1, child: 0 };
+  const child = pos.child > 0 ? ` · Issue ${pos.child}` : "";
+  return `Resuming from PI ${pos.pi} · Epic ${pos.epic}${child}`;
+}
 
 export default function App() {
   const [env, setEnv] = useState<EnvStatus | null>(null);
@@ -34,9 +63,12 @@ export default function App() {
     detail?: string;
   }>();
   const [error, setError] = useState<string | null>(null);
+  const [resumeBanner, setResumeBanner] = useState<string | null>(null);
+  const [checkpointAvailable, setCheckpointAvailable] = useState(false);
 
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<number | null>(null);
+  const autoResumeAttempted = useRef(false);
 
   const stopTracking = useCallback(() => {
     if (pollRef.current != null) {
@@ -51,49 +83,6 @@ export default function App() {
       }
       esRef.current = null;
     }
-  }, []);
-
-  useEffect(() => {
-    Promise.all([fetchEnvStatus(), fetchDefaults(), fetchActiveRun()])
-      .then(([envStatus, defaults, activeRun]) => {
-        setEnv(envStatus);
-        setSettings((prev) => ({ ...mergeDefaults(defaults), ...prev }));
-
-        if (activeRun?.active && (activeRun.status === "running" || activeRun.status === "cancelled")) {
-          // best-effort resume after sleep/reconnect
-          const activeId = activeRun.runId;
-          if (activeId) {
-            setRunId(activeId);
-            setStatus((activeRun.status as RunStatus) || "running");
-            setError(null);
-            setEvents([]);
-            setProgress(undefined);
-            setCurrentSection(undefined);
-            const es = subscribeRunEvents(activeId, handleEvent);
-            esRef.current = es;
-
-            pollRef.current = window.setInterval(async () => {
-              const res = await fetch(`/api/runs/${activeId}`);
-              if (!res.ok) return;
-              const body = await res.json();
-              if (body.status !== "running") {
-                stopTracking();
-                setStatus(body.status);
-                if (body.error) setError(body.error);
-              }
-            }, 1500);
-          }
-        }
-      })
-      .catch((e) => setError(String(e.message || e)));
-  }, []);
-
-  const patchSettings = useCallback((patch: Partial<Settings>) => {
-    setSettings((prev) => {
-      const next = { ...prev, ...patch };
-      saveSettings(next);
-      return next;
-    });
   }, []);
 
   const handleEvent = useCallback((raw: unknown) => {
@@ -114,22 +103,31 @@ export default function App() {
       setStatus("failed");
     }
     if (event.type === "status") {
-      if (event.status === "completed") setStatus("completed");
+      if (event.status === "completed") {
+        setStatus("completed");
+        setCheckpointAvailable(false);
+        setResumeBanner(null);
+      }
       if (event.status === "failed") setStatus("failed");
       if (event.status === "cancelled") setStatus("cancelled");
     }
-    if (event.type === "done") setStatus("completed");
+    if (event.type === "done") {
+      setStatus("completed");
+      setCheckpointAvailable(false);
+      setResumeBanner(null);
+    }
   }, []);
 
   const attachToRun = useCallback(
-    (id: string, initialStatus: RunStatus = "running") => {
+    (id: string, initialStatus: RunStatus = "running", initialEvents: SeedEvent[] = []) => {
       stopTracking();
       setRunId(id);
       setStatus(initialStatus);
       setError(null);
-      setEvents([]);
-      setProgress(undefined);
-      setCurrentSection(undefined);
+      setEvents(initialEvents);
+      const hydrated = hydrateFromEvents(initialEvents);
+      setProgress(hydrated.progress);
+      setCurrentSection(hydrated.currentSection);
 
       const es = subscribeRunEvents(id, handleEvent);
       esRef.current = es;
@@ -142,52 +140,166 @@ export default function App() {
           stopTracking();
           setStatus(body.status);
           if (body.error) setError(body.error);
+          if (body.status === "completed") {
+            setCheckpointAvailable(false);
+            setResumeBanner(null);
+          }
         }
       }, 1500);
     },
     [handleEvent, stopTracking]
   );
 
-  const run = async (mode: RunMode) => {
-    if (status === "running") return;
-    if (mode === "delete-seeded" && !settings.deleteConfirmed) {
-      setError("Check the delete confirmation box in Advanced settings before deleting.");
-      return;
-    }
-
-    setError(null);
-    setEvents([]);
-    setProgress(undefined);
-    setCurrentSection(undefined);
-    setStatus("running");
-
-    try {
-      const payload = settingsToPayload(settings, mode);
-      const { runId: id } = await startRun(payload);
-      setRunId(id);
-
-      const es = subscribeRunEvents(id, handleEvent);
-      esRef.current = es;
-
-      pollRef.current = window.setInterval(async () => {
-        const res = await fetch(`/api/runs/${id}`);
-        if (!res.ok) return;
-        const body = await res.json();
-        if (body.status !== "running") {
-          stopTracking();
-          setStatus(body.status);
-          if (body.error) setError(body.error);
-        }
-      }, 1500);
-    } catch (e) {
-      const err = e as Error & { runId?: string; statusCode?: number };
-      if (err.runId) {
-        // likely 409 after sleep: reattach to in-flight run
-        attachToRun(err.runId, "running");
+  const beginRun = useCallback(
+    async (mode: RunMode, options: { fresh?: boolean; resumed?: boolean; initialEvents?: SeedEvent[] } = {}) => {
+      if (status === "running") return;
+      if (mode === "delete-seeded" && !settings.deleteConfirmed) {
+        setError("Check the delete confirmation box in Advanced settings before deleting.");
         return;
       }
-      setStatus("failed");
-      setError(String(err.message || err));
+
+      setError(null);
+      if (!options.resumed) {
+        setEvents([]);
+        setProgress(undefined);
+        setCurrentSection(undefined);
+      }
+      setStatus("running");
+
+      try {
+        const payload = settingsToPayload(settings, mode);
+        const { runId: id, resumed } = await startRun(payload, { fresh: options.fresh });
+        setRunId(id);
+        if (!resumed && !options.resumed) {
+          setResumeBanner(null);
+        }
+        setCheckpointAvailable(false);
+
+        const initialEvents = options.initialEvents ?? [];
+        if (initialEvents.length) {
+          setEvents(initialEvents);
+          const hydrated = hydrateFromEvents(initialEvents);
+          setProgress(hydrated.progress);
+          setCurrentSection(hydrated.currentSection);
+        }
+
+        const es = subscribeRunEvents(id, handleEvent);
+        esRef.current = es;
+
+        pollRef.current = window.setInterval(async () => {
+          const res = await fetch(`/api/runs/${id}`);
+          if (!res.ok) return;
+          const body = await res.json();
+          if (body.status !== "running") {
+            stopTracking();
+            setStatus(body.status);
+            if (body.error) setError(body.error);
+            if (body.status === "completed") {
+              setCheckpointAvailable(false);
+              setResumeBanner(null);
+            }
+          }
+        }, 1500);
+      } catch (e) {
+        const err = e as Error & { runId?: string; statusCode?: number };
+        if (err.runId) {
+          attachToRun(err.runId, "running");
+          return;
+        }
+        setStatus("failed");
+        setError(String(err.message || err));
+      }
+    },
+    [attachToRun, handleEvent, settings, status, stopTracking]
+  );
+
+  useEffect(() => {
+    Promise.all([fetchEnvStatus(), fetchDefaults(), fetchActiveRun(), fetchCheckpoint()])
+      .then(([envStatus, defaults, activeRun, checkpoint]) => {
+        const mergedSettings = { ...mergeDefaults(defaults), ...loadSettings() };
+        setEnv(envStatus);
+        setSettings(mergedSettings);
+        setCheckpointAvailable(checkpoint.resumable);
+
+        if (activeRun?.active && (activeRun.status === "running" || activeRun.status === "cancelled")) {
+          const activeId = activeRun.runId;
+          if (activeId) attachToRun(activeId, (activeRun.status as RunStatus) || "running");
+          return;
+        }
+
+        if (
+          !autoResumeAttempted.current &&
+          checkpoint.resumable &&
+          envStatus.ok &&
+          (checkpoint.mode === "seed" || checkpoint.dryRun)
+        ) {
+          autoResumeAttempted.current = true;
+          const mode: RunMode = checkpoint.dryRun ? "dry-run" : "seed";
+          setResumeBanner(checkpointBannerText(checkpoint));
+          setSettings(mergedSettings);
+          void (async () => {
+            setError(null);
+            setEvents(checkpoint.events ?? []);
+            const hydrated = hydrateFromEvents(checkpoint.events ?? []);
+            setProgress(hydrated.progress);
+            setCurrentSection(hydrated.currentSection);
+            setStatus("running");
+            setCheckpointAvailable(false);
+            try {
+              const payload = settingsToPayload(mergedSettings, mode);
+              const { runId: id } = await startRun(payload);
+              setRunId(id);
+              const es = subscribeRunEvents(id, handleEvent);
+              esRef.current = es;
+              pollRef.current = window.setInterval(async () => {
+                const res = await fetch(`/api/runs/${id}`);
+                if (!res.ok) return;
+                const body = await res.json();
+                if (body.status !== "running") {
+                  stopTracking();
+                  setStatus(body.status);
+                  if (body.error) setError(body.error);
+                  if (body.status === "completed") {
+                    setCheckpointAvailable(false);
+                    setResumeBanner(null);
+                  }
+                }
+              }, 1500);
+            } catch (e) {
+              const err = e as Error & { runId?: string };
+              if (err.runId) {
+                attachToRun(err.runId, "running", checkpoint.events ?? []);
+                return;
+              }
+              setStatus("failed");
+              setError(String(err.message || err));
+            }
+          })();
+        }
+      })
+      .catch((e) => setError(String(e.message || e)));
+    // Mount-only bootstrap: reconnect active run or auto-resume checkpoint.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const patchSettings = useCallback((patch: Partial<Settings>) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...patch };
+      saveSettings(next);
+      return next;
+    });
+  }, []);
+
+  const run = (mode: RunMode) => beginRun(mode);
+
+  const startFresh = async (mode: RunMode = "seed") => {
+    try {
+      await clearCheckpoint();
+      setCheckpointAvailable(false);
+      setResumeBanner(null);
+      await beginRun(mode, { fresh: true });
+    } catch (e) {
+      setError(String((e as Error).message || e));
     }
   };
 
@@ -196,6 +308,7 @@ export default function App() {
     try {
       await cancelRun(runId);
       setStatus("cancelled");
+      setCheckpointAvailable(true);
     } catch (e) {
       setError(String((e as Error).message || e));
     }
@@ -227,6 +340,12 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-6xl w-full px-4 py-6 space-y-6">
+        {resumeBanner && (
+          <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
+            {resumeBanner}
+          </div>
+        )}
+
         {error && (
           <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}
@@ -240,6 +359,11 @@ export default function App() {
           <Button variant="secondary" onClick={() => run("dry-run")} disabled={busy || !env?.ok} className="gap-2">
             <FlaskConical className="h-4 w-4" /> Dry run
           </Button>
+          {checkpointAvailable && !busy && (
+            <Button variant="outline" onClick={() => startFresh("seed")} disabled={!env?.ok} className="gap-2">
+              <RotateCcw className="h-4 w-4" /> Start fresh
+            </Button>
+          )}
           <Button variant="destructive" onClick={() => run("delete-seeded")} disabled={busy || !env?.ok} className="gap-2">
             <Trash2 className="h-4 w-4" /> Delete seeded
           </Button>

@@ -259,12 +259,24 @@ Use `--verbose` with `--dry-run` to see every API call instead of progress bars.
 
 Delete this file if sprint IDs get out of sync (e.g. after switching boards).
 
+## Run checkpoint (resume)
+
+`.seed-jira-run-checkpoint.json` records in-progress seed runs so they can resume after a connection drop, cancel, or server restart.
+
+- **Auto-resume:** Starting a seed again (CLI or web UI) continues from the last checkpoint when settings match.
+- **Start fresh:** Pass `--fresh` on the CLI, click **Start fresh** in the UI, or `DELETE /api/checkpoint` to discard the checkpoint and begin a new run.
+- **Config mismatch:** If scale/board/field settings change, the checkpoint is cleared automatically and a fresh run starts.
+- **Cleanup:** Successful completion and `--delete-seeded` remove the checkpoint file.
+
+The checkpoint stores per-issue progress (creation, simulated activity, sprint assignment), RNG state, and recent progress events for UI replay.
+
 ## Troubleshooting
 
 | Problem | Likely cause | Fix |
 |---------|--------------|-----|
 | `No Scrum board found` | No scrum board for SSP | Create a Scrum board in Jira |
 | `rapidViewId` / board permission error | Wrong sprint ID in state | Delete `.seed-jira-ssp-state.json` and re-run |
+| Seed resumes unexpectedly | Checkpoint from prior run | Use `--fresh` or **Start fresh** in the UI |
 | `403` on delete | No "Delete issues" permission | Script removes `seed-ssp` label instead; or grant delete permission |
 | `410` on search | Old Jira search API removed | Script uses `/rest/api/3/search/jql` (already updated) |
 | Custom fields not set | Field names differ | Check exact names in Jira; adjust script if needed |
