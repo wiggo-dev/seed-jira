@@ -18,6 +18,7 @@ export interface Settings {
   reassignProb: number;
   epicChurnProb: number;
   products: string;
+  productsFieldId: string;
   teams: string;
   storyPoints: string;
   maxCommentsPerIssue: number;
@@ -40,6 +41,11 @@ export interface SeedEvent {
   summary?: Record<string, unknown>;
   status?: string;
   error?: string;
+}
+
+export interface SelectOption {
+  value: string;
+  label: string;
 }
 
 export interface EnvStatus {

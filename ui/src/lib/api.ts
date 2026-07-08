@@ -13,6 +13,7 @@ export const defaultSettings: Settings = {
   reassignProb: 0.1,
   epicChurnProb: 0.1,
   products: "",
+  productsFieldId: "",
   teams: "",
   storyPoints: "1,2,3,5,8,13",
   maxCommentsPerIssue: 4,
@@ -49,6 +50,7 @@ export function mergeDefaults(data: DefaultsResponse): Settings {
     issuesPerEpic: d.issuesPerEpic ?? defaultSettings.issuesPerEpic,
     reassignProb: d.reassignProb ?? defaultSettings.reassignProb,
     epicChurnProb: d.epicChurnProb ?? defaultSettings.epicChurnProb,
+    productsFieldId: d.productsFieldId ?? defaultSettings.productsFieldId,
     storyPoints: Array.isArray(d.storyPoints)
       ? d.storyPoints.join(",")
       : defaultSettings.storyPoints,
@@ -73,6 +75,7 @@ export function settingsToPayload(settings: Settings, mode: RunMode) {
     verbose: settings.verbose,
     boardName: settings.boardName || undefined,
     boardId: settings.boardId ? Number(settings.boardId) : undefined,
+    productsFieldId: settings.productsFieldId || undefined,
     numPIs: settings.numPIs,
     sprintsPerPI: settings.sprintsPerPI,
     epicsPerPI: settings.epicsPerPI,
@@ -100,6 +103,32 @@ export async function fetchDefaults(): Promise<DefaultsResponse> {
   const res = await fetch("/api/defaults");
   if (!res.ok) throw new Error("Failed to load defaults");
   return res.json();
+}
+
+export async function fetchAssignableUsersOptions() {
+  const res = await fetch("/api/options/assignable-users");
+  if (!res.ok) throw new Error("Failed to load assignable users");
+  const body = await res.json();
+  return (body.options || []) as Array<{ value: string; label: string }>;
+}
+
+export async function fetchTeamsOptions() {
+  const res = await fetch("/api/options/teams");
+  if (!res.ok) throw new Error("Failed to load teams");
+  const body = await res.json();
+  return (body.options || []) as Array<{ value: string; label: string }>;
+}
+
+export async function fetchProductsOptions(fieldId?: string) {
+  const url = new URL("/api/options/products", window.location.origin);
+  if (fieldId) url.searchParams.set("fieldId", fieldId);
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error("Failed to load products options");
+  const body = await res.json();
+  return {
+    fieldId: body.fieldId as string,
+    options: (body.options || []) as Array<{ value: string; label: string }>,
+  };
 }
 
 export async function startRun(payload: Record<string, unknown>) {

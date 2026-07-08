@@ -74,6 +74,7 @@ function bodyToConfig(body = {}) {
     "epic-churn-prob": rest.epicChurnProb,
     products: Array.isArray(rest.products) ? rest.products.join(",") : rest.products,
     teams: Array.isArray(rest.teams) ? rest.teams.join(",") : rest.teams,
+    "products-field-id": rest.productsFieldId,
     "story-points": Array.isArray(rest.storyPoints) ? rest.storyPoints.join(",") : rest.storyPoints,
   });
 }
@@ -99,6 +100,7 @@ app.get("/api/defaults", (_req, res) => {
       ...DEFAULTS,
       reassignProb: 0.1,
       epicChurnProb: 0.1,
+      productsFieldId: "",
       storyPoints: [1, 2, 3, 5, 8, 13],
       verbose: false,
       deleteArtifacts: false,
@@ -108,6 +110,156 @@ app.get("/api/defaults", (_req, res) => {
     projectKey: PROJECT_KEY,
     seedLabel: SEED_LABEL,
   });
+});
+
+function basicAuthHeader(email, token) {
+  const b64 = Buffer.from(`${email}:${token}`, "utf8").toString("base64");
+  return `Basic ${b64}`;
+}
+
+function parseOptionLike(value) {
+  if (value == null) return [];
+  if (Array.isArray(value)) return value.flatMap(parseOptionLike);
+  if (typeof value === "string") return value ? [value] : [];
+  if (typeof value === "number") return [String(value)];
+  if (typeof value === "object") {
+    if (typeof value.value === "string") return [value.value];
+    if (typeof value.name === "string") return [value.name];
+    if (typeof value.id === "string") return [value.id];
+  }
+  return [];
+}
+
+async function jiraJson(method, path, body) {
+  const baseUrl = (process.env.JIRA_BASE_URL || "").replace(/\/$/, "");
+  const email = process.env.JIRA_EMAIL;
+  const token = process.env.JIRA_API_TOKEN;
+  if (!baseUrl || !email || !token) {
+    throw new Error("Missing env vars: JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN");
+  }
+  const url = `${baseUrl}${path}`;
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Authorization: basicAuthHeader(email, token),
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`${method} ${path} -> ${res.status}\n${text}`);
+  }
+  return text ? JSON.parse(text) : null;
+}
+
+app.get("/api/options/assignable-users", async (req, res) => {
+  try {
+    const projectKey = req.query.projectKey ? String(req.query.projectKey) : PROJECT_KEY;
+    const users = await jiraJson(
+      "GET",
+      `/rest/api/3/user/assignable/search?project=${encodeURIComponent(projectKey)}&maxResults=1000`
+    );
+    const list = Array.isArray(users)
+      ? users.map((u) => ({
+          value: u.accountId,
+          label: `${u.displayName || "(no name)"}${u.emailAddress ? ` <${u.emailAddress}>` : ""}`,
+        }))
+      : [];
+    res.json({ options: list });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.get("/api/options/teams", async (req, res) => {
+  try {
+    const projectKey = req.query.projectKey ? String(req.query.projectKey) : PROJECT_KEY;
+    const fields = await jiraJson("GET", "/rest/api/3/field");
+    const teamsField = Array.isArray(fields)
+      ? fields.find((f) => f?.name && ["teams", "team"].includes(String(f.name).toLowerCase()) && f?.id)
+      : null;
+    const teamFieldId = teamsField?.id;
+    if (!teamFieldId) throw new Error("Could not find Team custom field id.");
+
+    const jql = `project = ${projectKey} AND ${teamFieldId} IS NOT EMPTY`;
+    const byId = new Map();
+    let nextPageToken = null;
+
+    while (true) {
+      const data = await jiraJson("POST", "/rest/api/3/search/jql", {
+        jql,
+        maxResults: 100,
+        fields: [teamFieldId],
+        nextPageToken,
+      });
+      const issues = data?.issues || data?.values || [];
+      for (const issue of issues) {
+        const team = issue?.fields?.[teamFieldId];
+        const id = team?.id || null;
+        const label = team?.name || team?.title || id;
+        if (id && !byId.has(id)) byId.set(id, label);
+      }
+      nextPageToken = data?.nextPageToken ?? null;
+      if (!nextPageToken || issues.length === 0) break;
+    }
+
+    const options = [...byId.entries()].map(([value, label]) => ({ value, label }));
+    options.sort((a, b) => a.label.localeCompare(b.label));
+    res.json({ options });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.get("/api/options/products", async (req, res) => {
+  try {
+    const projectKey = req.query.projectKey ? String(req.query.projectKey) : PROJECT_KEY;
+    const requestedFieldId = req.query.fieldId ? String(req.query.fieldId) : "";
+
+    const fields = await jiraJson("GET", "/rest/api/3/field");
+    const namedField = Array.isArray(fields)
+      ? fields.find((f) => {
+          const n = String(f?.name || "").toLowerCase();
+          return ["product(s) affected", "products affected", "product affected"].includes(n) && f?.id;
+        })
+      : null;
+    const fieldId = requestedFieldId || namedField?.id;
+    if (!fieldId) throw new Error("Could not determine products custom field id.");
+
+    const jql = `project = ${projectKey} AND ${fieldId} IS NOT EMPTY`;
+    const byValue = new Map();
+    let nextPageToken = null;
+
+    while (true) {
+      const data = await jiraJson("POST", "/rest/api/3/search/jql", {
+        jql,
+        maxResults: 100,
+        fields: [fieldId],
+        nextPageToken,
+      });
+      const issues = data?.issues || data?.values || [];
+
+      for (const issue of issues) {
+        const v = issue?.fields?.[fieldId];
+        const values = parseOptionLike(v);
+        for (const raw of values) {
+          const key = String(raw);
+          if (key && !byValue.has(key)) byValue.set(key, key);
+        }
+      }
+
+      nextPageToken = data?.nextPageToken ?? null;
+      if (!nextPageToken || issues.length === 0) break;
+    }
+
+    const options = [...byValue.entries()].map(([value, label]) => ({ value, label }));
+    options.sort((a, b) => a.label.localeCompare(b.label));
+    res.json({ fieldId, options });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
 });
 
 app.get("/api/runs/active", (_req, res) => {

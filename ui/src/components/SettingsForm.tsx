@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Settings } from "@/lib/types";
 import {
   Accordion,
@@ -11,6 +12,9 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { SearchMultiSelect } from "@/components/SearchMultiSelect";
+import type { SelectOption } from "@/lib/types";
+import { fetchAssignableUsersOptions, fetchProductsOptions, fetchTeamsOptions } from "@/lib/api";
 
 interface SettingsFormProps {
   settings: Settings;
@@ -34,6 +38,57 @@ function Field({
 }
 
 export function SettingsForm({ settings, onChange, disabled }: SettingsFormProps) {
+  const splitCsv = useMemo(
+    () => (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean),
+    []
+  );
+
+  const [assignableOptions, setAssignableOptions] = useState<SelectOption[]>([]);
+  const [teamOptions, setTeamOptions] = useState<SelectOption[]>([]);
+  const [productOptions, setProductOptions] = useState<SelectOption[]>([]);
+  const [productsLoading, setProductsLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchAssignableUsersOptions()
+      .then(setAssignableOptions)
+      .catch(() => {
+        /* ignore; user can still enter ids manually in advanced mode if needed */
+      });
+    fetchTeamsOptions()
+      .then(setTeamOptions)
+      .catch(() => {
+        /* ignore */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setProductsLoading(true);
+    fetchProductsOptions(settings.productsFieldId || undefined)
+      .then(({ options }) => {
+        if (cancelled) return;
+        setProductOptions(options);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setProductOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setProductsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.productsFieldId]);
+
+  const selectedAssignees = splitCsv(settings.assigneeIds);
+  const selectedTeams = splitCsv(settings.teams);
+  const selectedProducts = splitCsv(settings.products);
+
   return (
     <Card>
       <CardHeader>
@@ -44,7 +99,7 @@ export function SettingsForm({ settings, onChange, disabled }: SettingsFormProps
         <Accordion type="multiple" defaultValue={["board", "scale"]} className="w-full">
           <AccordionItem value="board">
             <AccordionTrigger>Board</AccordionTrigger>
-            <AccordionContent className="grid gap-4 md:grid-cols-2">
+            <AccordionContent className="grid gap-4 lg:grid-cols-2">
               <Field label="Board name">
                 <Input
                   value={settings.boardName}
@@ -65,7 +120,7 @@ export function SettingsForm({ settings, onChange, disabled }: SettingsFormProps
 
           <AccordionItem value="scale">
             <AccordionTrigger>Scale</AccordionTrigger>
-            <AccordionContent className="grid gap-4 md:grid-cols-2">
+            <AccordionContent className="grid gap-4 lg:grid-cols-2">
               {([
                 ["numPIs", "PIs"],
                 ["sprintsPerPI", "Sprints per PI"],
@@ -87,13 +142,14 @@ export function SettingsForm({ settings, onChange, disabled }: SettingsFormProps
 
           <AccordionItem value="assignees">
             <AccordionTrigger>Assignees</AccordionTrigger>
-            <AccordionContent className="grid gap-4 md:grid-cols-2">
-              <Field label="Assignee IDs (comma-separated)">
-                <Input
-                  value={settings.assigneeIds}
-                  disabled={disabled}
-                  onChange={(e) => onChange({ assigneeIds: e.target.value })}
-                  placeholder="712020:...,712020:..."
+            <AccordionContent className="grid gap-4 lg:grid-cols-2">
+              <Field label="Assignees">
+                <SearchMultiSelect
+                  options={assignableOptions}
+                  selected={selectedAssignees}
+                  disabled={disabled || !assignableOptions.length}
+                  placeholder="Search users…"
+                  onChange={(next) => onChange({ assigneeIds: next.join(",") })}
                 />
               </Field>
               <Field label="Reassign probability">
@@ -113,20 +169,35 @@ export function SettingsForm({ settings, onChange, disabled }: SettingsFormProps
           <AccordionItem value="fields">
             <AccordionTrigger>Custom fields</AccordionTrigger>
             <AccordionContent className="grid gap-4">
-              <Field label="Products (comma-separated)">
+              <Field label="Products field customfield id (optional)">
                 <Input
-                  value={settings.products}
+                  value={settings.productsFieldId}
                   disabled={disabled}
-                  onChange={(e) => onChange({ products: e.target.value })}
+                  onChange={(e) => onChange({ productsFieldId: e.target.value.trim() })}
+                  placeholder="e.g. customfield_10101 (leave blank to match by name)"
                 />
               </Field>
-              <Field label="Teams (comma-separated names or UUIDs)">
-                <Input
-                  value={settings.teams}
-                  disabled={disabled}
-                  onChange={(e) => onChange({ teams: e.target.value })}
+
+              <Field label="Products">
+                <SearchMultiSelect
+                  options={productOptions}
+                  selected={selectedProducts}
+                  disabled={disabled || productsLoading}
+                  placeholder={productsLoading ? "Loading products…" : "Search products…"}
+                  onChange={(next) => onChange({ products: next.join(",") })}
                 />
               </Field>
+
+              <Field label="Teams">
+                <SearchMultiSelect
+                  options={teamOptions}
+                  selected={selectedTeams}
+                  disabled={disabled || !teamOptions.length}
+                  placeholder="Search teams…"
+                  onChange={(next) => onChange({ teams: next.join(",") })}
+                />
+              </Field>
+
               <Field label="Story points (comma-separated)">
                 <Input
                   value={settings.storyPoints}
@@ -139,7 +210,7 @@ export function SettingsForm({ settings, onChange, disabled }: SettingsFormProps
 
           <AccordionItem value="activity">
             <AccordionTrigger>Activity simulation</AccordionTrigger>
-            <AccordionContent className="grid gap-4 md:grid-cols-2">
+            <AccordionContent className="grid gap-4 lg:grid-cols-2">
               {([
                 ["maxCommentsPerIssue", "Max comments"],
                 ["maxWorklogsPerIssue", "Max worklogs"],

@@ -129,7 +129,7 @@ export default function App() {
   const busy = status === "running";
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted/30">
+    <div className="min-h-screen bg-gradient-to-b from-background to-muted/30 overflow-x-auto">
       <header className="border-b bg-card/80 backdrop-blur sticky top-0 z-10">
         <div className="mx-auto max-w-6xl px-4 py-4 flex items-center justify-between gap-4">
           <div>
@@ -147,7 +147,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-6 space-y-6">
+      <main className="mx-auto max-w-6xl w-full px-4 py-6 space-y-6">
         {error && (
           <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}
@@ -178,7 +178,7 @@ export default function App() {
           )}
         </section>
 
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-6 lg:grid-cols-2 min-w-0">
           <ProgressPanel
             events={events}
             status={status}
