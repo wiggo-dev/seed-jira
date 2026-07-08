@@ -41,6 +41,7 @@ Board selection:
 Assignees:
   --assignee-ids <csv>
   --reassign-prob <0..1>    Default 0.1
+  --epic-churn-prob <0..1>  Chance to remove/move/re-link epic per issue (default 0.1)
 
 Fields:
   --products <csv>          "Product(s) Affected" values
@@ -100,6 +101,7 @@ const ASSIGNEE_IDS = String(args["assignee-ids"] ?? "")
   .map((s) => s.trim())
   .filter(Boolean);
 const REASSIGN_PROB = Number(args["reassign-prob"] ?? 0.1);
+const EPIC_CHURN_PROB = Number(args["epic-churn-prob"] ?? 0.1);
 
 const PRODUCTS = String(args["products"] ?? "")
   .split(",")
@@ -482,6 +484,76 @@ async function setAssignee(key, accountId) {
   await updateIssue(key, { assignee: { accountId } });
 }
 
+async function resolveEpicAssociation(epicLinkFieldId, storyTypeId) {
+  if (!storyTypeId) {
+    return epicLinkFieldId ? { mode: "epic-link", epicLinkFieldId } : { mode: null, epicLinkFieldId: null };
+  }
+
+  const meta = await jira(
+    "GET",
+    `/rest/api/3/issue/createmeta?projectKeys=${PROJECT_KEY}&issuetypeIds=${storyTypeId}&expand=projects.issuetypes.fields`
+  );
+  const createFields = meta.projects?.[0]?.issuetypes?.[0]?.fields || {};
+  if (createFields.parent) return { mode: "parent", epicLinkFieldId };
+  if (epicLinkFieldId && createFields[epicLinkFieldId]) {
+    return { mode: "epic-link", epicLinkFieldId };
+  }
+  if (epicLinkFieldId) return { mode: "epic-link", epicLinkFieldId };
+  return { mode: null, epicLinkFieldId: null };
+}
+
+function applyEpicAssociation(fieldsExtra, epicAssoc, epicKey) {
+  if (!epicAssoc?.mode || !epicKey) return;
+  if (epicAssoc.mode === "parent") {
+    fieldsExtra.parent = { key: epicKey };
+  } else {
+    fieldsExtra[epicAssoc.epicLinkFieldId] = epicKey;
+  }
+}
+
+async function setEpicAssociation(key, epicAssoc, epicKey) {
+  if (!epicAssoc?.mode || DRY_RUN) return false;
+  if (epicAssoc.mode === "parent") {
+    await updateIssue(key, { parent: epicKey ? { key: epicKey } : null });
+  } else {
+    await updateIssue(key, { [epicAssoc.epicLinkFieldId]: epicKey });
+  }
+  return true;
+}
+
+async function simulateEpicChurn(key, epicAssoc, { currentEpicKey, piEpicKeys }, onAction) {
+  if (!epicAssoc?.mode || EPIC_CHURN_PROB <= 0 || rand() >= EPIC_CHURN_PROB) return 0;
+
+  const otherEpics = piEpicKeys.filter((k) => k !== currentEpicKey);
+  const roll = rand();
+  let actions = 0;
+
+  if (roll < 0.35) {
+    if (await setEpicAssociation(key, epicAssoc, null)) {
+      actions++;
+      onAction?.(`${key} removed from epic`);
+    }
+  } else if (roll < 0.7 && otherEpics.length) {
+    const target = choice(otherEpics);
+    if (await setEpicAssociation(key, epicAssoc, target)) {
+      actions++;
+      onAction?.(`${key} moved to ${target}`);
+    }
+  } else if (piEpicKeys.length) {
+    if (await setEpicAssociation(key, epicAssoc, null)) {
+      actions++;
+      onAction?.(`${key} removed from epic`);
+    }
+    const target = choice(piEpicKeys);
+    if (await setEpicAssociation(key, epicAssoc, target)) {
+      actions++;
+      onAction?.(`${key} added to ${target}`);
+    }
+  }
+
+  return actions;
+}
+
 async function removeSeedLabel(key) {
   const data = await jira("GET", `/rest/api/3/issue/${key}?fields=labels`);
   const labels = (data?.fields?.labels || []).filter((l) => l !== SEED_LABEL);
@@ -557,7 +629,7 @@ async function deleteVersion(id) {
   await sleep(KNOBS.sleepMs);
 }
 
-async function simulateActivity(key, onAction) {
+async function simulateActivity(key, onAction, epicContext = null) {
   let actions = 0;
   const commentCount = rint(0, KNOBS.maxCommentsPerIssue);
   const worklogCount = rint(0, KNOBS.maxWorklogsPerIssue);
@@ -591,6 +663,10 @@ async function simulateActivity(key, onAction) {
     await setAssignee(key, choice(ASSIGNEE_IDS));
     actions++;
     onAction?.(`${key} reassigned`);
+  }
+
+  if (epicContext) {
+    actions += await simulateEpicChurn(key, epicContext.epicAssoc, epicContext, onAction);
   }
 
   return actions;
@@ -682,6 +758,7 @@ async function generate() {
   if (!epicTypeId) throw new Error("Could not find issue type 'Epic' in project SSP.");
   const storyTypeId = issueTypes.get("Story");
   const bugTypeId = issueTypes.get("Bug");
+  const epicAssoc = await resolveEpicAssociation(epicLinkFieldId, storyTypeId);
 
   const boardId = await selectBoardId();
   if (state.boardId && Number(state.boardId) !== Number(boardId)) {
@@ -722,6 +799,7 @@ async function generate() {
   if (storyPointsField) logInfo(`Story points field: ${storyPointsField.name}`);
   if (productsAffectedField) logInfo(`Products field: ${productsAffectedField.name}`);
   if (teamsField) logInfo(`Teams field: ${teamsField.name}`);
+  if (epicAssoc.mode) logInfo(`Epic association: ${epicAssoc.mode}`);
 
   const piNames = Array.from({ length: KNOBS.numPIs }, (_, i) => `SSP-PI-${i + 1}`);
   const sprintNames = [];
@@ -755,6 +833,7 @@ async function generate() {
     const fixVersionId = state.versions[piName] || versionIds.get(piName);
     const fixVersions = fixVersionId ? [{ id: fixVersionId }] : [];
     const piSprints = Array.from({ length: KNOBS.sprintsPerPI }, (_, i) => `SSP-PI-${pi}.${i + 1}`);
+    const piEpicKeys = [];
 
     for (let e = 1; e <= KNOBS.epicsPerPI; e++) {
       const epicSummary = `[${SEED_LABEL}] ${piName} Epic ${e}: capability area ${rint(1, 30)}`;
@@ -763,6 +842,7 @@ async function generate() {
       if (ASSIGNEE_IDS.length) epicFields.assignee = { accountId: choice(ASSIGNEE_IDS) };
 
       const epicKey = await createIssue(epicTypeId, epicSummary, `Seed epic for ${piName}.`, epicFields, state);
+      piEpicKeys.push(epicKey);
       createdCount++;
       issueProgress.tick(`${piName} epic ${epicKey}`);
 
@@ -791,15 +871,20 @@ async function generate() {
           const val = buildFieldValue(storyPointsField, pickRandom(STORY_POINTS));
           if (val != null) fieldsExtra[storyPointsField.id] = val;
         }
-        if (epicLinkFieldId) fieldsExtra[epicLinkFieldId] = epicKey;
-        else fieldsExtra.parent = { key: epicKey };
+        applyEpicAssociation(fieldsExtra, epicAssoc, epicKey);
 
         const key = await createIssue(typeId, summary, "Seed issue with simulated activity.", fieldsExtra, state);
         createdCount++;
         issueProgress.tick(`${typeName} ${key}`);
         if (typeName === "Story" || typeName === "Bug") sprintCandidateKeys.push(key);
 
-        const actions = await simulateActivity(key, (detail) => issueProgress.set(issueProgress.current, detail));
+        const actions = await simulateActivity(
+          key,
+          (detail) => issueProgress.set(issueProgress.current, detail),
+          epicAssoc.mode
+            ? { epicAssoc, currentEpicKey: epicKey, piEpicKeys }
+            : null
+        );
         activityCount += actions;
       }
 

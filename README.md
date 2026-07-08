@@ -104,6 +104,7 @@ If cleanup fails partway through, delete `.seed-jira-ssp-state.json` and re-run,
 - Backdated worklogs (simulates history over `--days-of-history` days)
 - Status transitions (best-effort, depends on your workflow)
 - Optional reassignment (`--reassign-prob`)
+- Optional epic churn: remove from epic, move to another epic, or remove then re-link (`--epic-churn-prob`, default 0.1). Uses Jira Cloud `parent` when available, otherwise Epic Link.
 
 **Defaults** (override with flags):
 
@@ -199,6 +200,7 @@ node seed-jira-ssp.mjs --delete-seeded --delete-artifacts --yes
 | `--board-id <id>` | Use a specific board ID |
 | `--assignee-ids <csv>` | Account IDs to randomly assign |
 | `--reassign-prob <0..1>` | Chance of reassigning after create (default 0.1) |
+| `--epic-churn-prob <0..1>` | Chance of epic remove/move/re-link per issue (default 0.1) |
 | `--products <csv>` | Values for **Product(s) Affected** |
 | `--teams <csv>` | Atlassian **Team** ids or names (names resolved from issues already using Team) |
 | `--story-points <csv>` | Story point pool for Stories |
