@@ -28,6 +28,28 @@ JIRA_EMAIL=you@company.com
 JIRA_API_TOKEN=your_api_token_here
 ```
 
+## Web UI (local)
+
+Run the API and React UI together:
+
+```bash
+npm run dev
+```
+
+Then open **http://localhost:5173**
+
+- **Seed / Dry run / Delete** with live progress
+- **Advanced settings** panel for all CLI options
+- **Light / dark / system** theme toggle
+- Credentials still come from `.env` only (never stored in the browser)
+
+Individual processes:
+
+```bash
+npm run api   # API on http://localhost:3847
+npm run ui    # Vite dev server on http://localhost:5173
+```
+
 ## Run flow
 
 Follow these steps in order:

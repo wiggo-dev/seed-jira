@@ -1,3 +1,4 @@
 node_modules/
 .env
 .seed-jira-ssp-state.json
+dist-ui/
