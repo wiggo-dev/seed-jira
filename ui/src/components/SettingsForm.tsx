@@ -266,6 +266,17 @@ export function SettingsForm({ settings, onChange, disabled }: SettingsFormProps
                   onCheckedChange={(v) => onChange({ deleteArtifacts: v })}
                 />
               </div>
+              <div className="flex items-center justify-between rounded-lg border p-3">
+                <div>
+                  <Label>Also delete state file</Label>
+                  <p className="text-sm text-muted-foreground">Removes `.seed-jira-ssp-state.json` after cleanup</p>
+                </div>
+                <Switch
+                  checked={settings.deleteStateFile}
+                  disabled={disabled || !settings.deleteConfirmed}
+                  onCheckedChange={(v) => onChange({ deleteStateFile: v })}
+                />
+              </div>
               <div className="flex items-center gap-3 rounded-lg border border-destructive/40 p-3">
                 <Checkbox
                   id="delete-confirmed"

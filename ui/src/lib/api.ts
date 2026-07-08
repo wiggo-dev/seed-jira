@@ -1,4 +1,4 @@
-import type { DefaultsResponse, EnvStatus, RunMode, Settings } from "./types";
+import type { ActiveRunResponse, DefaultsResponse, EnvStatus, RunMode, Settings } from "./types";
 
 const SETTINGS_KEY = "seed-jira-settings";
 
@@ -23,6 +23,7 @@ export const defaultSettings: Settings = {
   verbose: false,
   deleteArtifacts: false,
   deleteConfirmed: false,
+  deleteStateFile: false,
 };
 
 export function loadSettings(): Settings {
@@ -60,6 +61,7 @@ export function mergeDefaults(data: DefaultsResponse): Settings {
     sleepMs: d.sleepMs ?? defaultSettings.sleepMs,
     verbose: d.verbose ?? defaultSettings.verbose,
     deleteArtifacts: d.deleteArtifacts ?? defaultSettings.deleteArtifacts,
+    deleteStateFile: d.deleteStateFile ?? defaultSettings.deleteStateFile,
   };
 }
 
@@ -72,6 +74,7 @@ export function settingsToPayload(settings: Settings, mode: RunMode) {
     dryRun: mode === "dry-run",
     yes: mode === "delete-seeded" ? settings.deleteConfirmed : undefined,
     deleteArtifacts: settings.deleteArtifacts,
+    deleteStateFile: settings.deleteStateFile,
     verbose: settings.verbose,
     boardName: settings.boardName || undefined,
     boardId: settings.boardId ? Number(settings.boardId) : undefined,
@@ -131,6 +134,12 @@ export async function fetchProductsOptions(fieldId?: string) {
   };
 }
 
+export async function fetchActiveRun(): Promise<ActiveRunResponse> {
+  const res = await fetch("/api/runs/active");
+  if (!res.ok) throw new Error("Failed to fetch active run");
+  return res.json();
+}
+
 export async function startRun(payload: Record<string, unknown>) {
   const res = await fetch("/api/runs", {
     method: "POST",
@@ -139,7 +148,13 @@ export async function startRun(payload: Record<string, unknown>) {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `Failed to start run (${res.status})`);
+    const err = new Error(body.error || `Failed to start run (${res.status})`) as Error & {
+      runId?: string;
+      statusCode?: number;
+    };
+    if (body?.runId) err.runId = String(body.runId);
+    err.statusCode = res.status;
+    throw err;
   }
   return res.json() as Promise<{ runId: string }>;
 }

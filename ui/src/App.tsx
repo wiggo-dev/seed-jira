@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Play, FlaskConical, Trash2, Users, UsersRound, Square } from "lucide-react";
 import { ModeToggle } from "@/components/mode-toggle";
 import { ProgressPanel } from "@/components/ProgressPanel";
@@ -10,6 +10,7 @@ import {
   cancelRun,
   fetchDefaults,
   fetchEnvStatus,
+  fetchActiveRun,
   loadSettings,
   mergeDefaults,
   saveSettings,
@@ -34,11 +35,55 @@ export default function App() {
   }>();
   const [error, setError] = useState<string | null>(null);
 
+  const esRef = useRef<EventSource | null>(null);
+  const pollRef = useRef<number | null>(null);
+
+  const stopTracking = useCallback(() => {
+    if (pollRef.current != null) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    if (esRef.current) {
+      try {
+        esRef.current.close();
+      } catch {
+        /* ignore */
+      }
+      esRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
-    Promise.all([fetchEnvStatus(), fetchDefaults()])
-      .then(([envStatus, defaults]) => {
+    Promise.all([fetchEnvStatus(), fetchDefaults(), fetchActiveRun()])
+      .then(([envStatus, defaults, activeRun]) => {
         setEnv(envStatus);
         setSettings((prev) => ({ ...mergeDefaults(defaults), ...prev }));
+
+        if (activeRun?.active && (activeRun.status === "running" || activeRun.status === "cancelled")) {
+          // best-effort resume after sleep/reconnect
+          const activeId = activeRun.runId;
+          if (activeId) {
+            setRunId(activeId);
+            setStatus((activeRun.status as RunStatus) || "running");
+            setError(null);
+            setEvents([]);
+            setProgress(undefined);
+            setCurrentSection(undefined);
+            const es = subscribeRunEvents(activeId, handleEvent);
+            esRef.current = es;
+
+            pollRef.current = window.setInterval(async () => {
+              const res = await fetch(`/api/runs/${activeId}`);
+              if (!res.ok) return;
+              const body = await res.json();
+              if (body.status !== "running") {
+                stopTracking();
+                setStatus(body.status);
+                if (body.error) setError(body.error);
+              }
+            }, 1500);
+          }
+        }
       })
       .catch((e) => setError(String(e.message || e)));
   }, []);
@@ -76,6 +121,33 @@ export default function App() {
     if (event.type === "done") setStatus("completed");
   }, []);
 
+  const attachToRun = useCallback(
+    (id: string, initialStatus: RunStatus = "running") => {
+      stopTracking();
+      setRunId(id);
+      setStatus(initialStatus);
+      setError(null);
+      setEvents([]);
+      setProgress(undefined);
+      setCurrentSection(undefined);
+
+      const es = subscribeRunEvents(id, handleEvent);
+      esRef.current = es;
+
+      pollRef.current = window.setInterval(async () => {
+        const res = await fetch(`/api/runs/${id}`);
+        if (!res.ok) return;
+        const body = await res.json();
+        if (body.status !== "running") {
+          stopTracking();
+          setStatus(body.status);
+          if (body.error) setError(body.error);
+        }
+      }, 1500);
+    },
+    [handleEvent, stopTracking]
+  );
+
   const run = async (mode: RunMode) => {
     if (status === "running") return;
     if (mode === "delete-seeded" && !settings.deleteConfirmed) {
@@ -95,24 +167,27 @@ export default function App() {
       setRunId(id);
 
       const es = subscribeRunEvents(id, handleEvent);
-      es.addEventListener("error", () => {
-        es.close();
-      });
+      esRef.current = es;
 
-      const poll = setInterval(async () => {
+      pollRef.current = window.setInterval(async () => {
         const res = await fetch(`/api/runs/${id}`);
         if (!res.ok) return;
         const body = await res.json();
         if (body.status !== "running") {
-          clearInterval(poll);
-          es.close();
+          stopTracking();
           setStatus(body.status);
           if (body.error) setError(body.error);
         }
       }, 1500);
     } catch (e) {
+      const err = e as Error & { runId?: string; statusCode?: number };
+      if (err.runId) {
+        // likely 409 after sleep: reattach to in-flight run
+        attachToRun(err.runId, "running");
+        return;
+      }
       setStatus("failed");
-      setError(String((e as Error).message || e));
+      setError(String(err.message || err));
     }
   };
 
@@ -125,6 +200,10 @@ export default function App() {
       setError(String((e as Error).message || e));
     }
   };
+
+  useEffect(() => {
+    return () => stopTracking();
+  }, [stopTracking]);
 
   const busy = status === "running";
 

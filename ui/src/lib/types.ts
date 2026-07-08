@@ -28,6 +28,7 @@ export interface Settings {
   verbose: boolean;
   deleteArtifacts: boolean;
   deleteConfirmed: boolean;
+  deleteStateFile: boolean;
 }
 
 export interface SeedEvent {
@@ -53,6 +54,14 @@ export interface EnvStatus {
   baseUrl: string;
   projectKey: string;
   seedLabel: string;
+}
+
+export interface ActiveRunResponse {
+  active: boolean;
+  runId?: string;
+  status?: RunStatus | string;
+  mode?: string;
+  startedAt?: string;
 }
 
 export interface DefaultsResponse {
