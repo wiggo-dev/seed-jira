@@ -1,6 +1,6 @@
 # Jira SSP Seeder
 
-Node script to populate a Jira Cloud development instance with realistic planning data for the **SSP** project: fix versions, sprints, epics, stories, tasks, bugs, assignees, custom fields, and simulated activity history.
+Node script to populate a Jira Cloud development instance with realistic planning data for the **SSP** project: fix versions, sprints, epics, stories, bugs, assignees, custom fields, and simulated activity history.
 
 All seeded issues are tagged with the label `seed-ssp` so they can be found and cleaned up later.
 
@@ -95,9 +95,8 @@ If cleanup fails partway through, delete `.seed-jira-ssp-state.json` and re-run,
 | Fix versions | `SSP-PI-1`, `SSP-PI-2`, … | One per PI |
 | Sprints | `SSP-PI-1.1`, `SSP-PI-1.2`, … | `--sprints-per-pi` per PI |
 | Epics | `[seed-ssp] SSP-PI-n Epic …` | Linked to fix version |
-| Stories | ~60% of child issues | Story points, sprint, products, teams |
-| Tasks | ~25% of child issues | Products, teams; **not** added to sprints |
-| Bugs | ~15% of child issues | Sprint, products, teams |
+| Stories | ~80% of child issues | Story points, sprint, products, teams |
+| Bugs | ~20% of child issues | Sprint, products, teams |
 
 **Per issue activity (randomised):**
 
@@ -252,5 +251,5 @@ Delete this file if sprint IDs get out of sync (e.g. after switching boards).
 
 - **User creation** is not supported. Invite users via Atlassian Admin, then use `--print-assignable-users` to get account IDs.
 - **Issue created dates** cannot be set on Jira Cloud. History is simulated via comments, worklogs, transitions, and reassignments.
-- **Epics and Tasks** are not placed in sprints; only **Stories and Bugs** are.
+- **Epics** are not placed in sprints; child issues are **Stories and Bugs** only.
 - Re-running is safe: existing versions and sprints with matching names are reused.

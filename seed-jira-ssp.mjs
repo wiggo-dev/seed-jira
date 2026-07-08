@@ -681,7 +681,6 @@ async function generate() {
   const epicTypeId = issueTypes.get("Epic");
   if (!epicTypeId) throw new Error("Could not find issue type 'Epic' in project SSP.");
   const storyTypeId = issueTypes.get("Story");
-  const taskTypeId = issueTypes.get("Task");
   const bugTypeId = issueTypes.get("Bug");
 
   const boardId = await selectBoardId();
@@ -771,14 +770,10 @@ async function generate() {
 
       for (let i = 1; i <= KNOBS.issuesPerEpic; i++) {
         const typeName = weightedChoice([
-          { v: "Story", w: 0.6 },
-          { v: "Task", w: 0.25 },
-          { v: "Bug", w: 0.15 },
+          { v: "Story", w: 0.8 },
+          { v: "Bug", w: 0.2 },
         ]);
-        const typeId =
-          typeName === "Story" ? storyTypeId :
-          typeName === "Task" ? taskTypeId :
-          typeName === "Bug" ? bugTypeId : null;
+        const typeId = typeName === "Story" ? storyTypeId : typeName === "Bug" ? bugTypeId : null;
         if (!typeId) continue;
 
         const summary = `[${SEED_LABEL}] ${piName} ${typeName} ${e}.${i}: implement thing ${rint(100, 999)}`;
