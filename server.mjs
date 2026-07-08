@@ -81,6 +81,7 @@ function bodyToConfig(body = {}) {
     products: Array.isArray(rest.products) ? rest.products.join(",") : rest.products,
     teams: Array.isArray(rest.teams) ? rest.teams.join(",") : rest.teams,
     "products-field-id": rest.productsFieldId,
+    "story-points-field-id": rest.storyPointsFieldId,
     "story-points": Array.isArray(rest.storyPoints) ? rest.storyPoints.join(",") : rest.storyPoints,
   });
 }
@@ -107,6 +108,7 @@ app.get("/api/defaults", (_req, res) => {
       reassignProb: 0.1,
       epicChurnProb: 0.1,
       productsFieldId: "",
+      storyPointsFieldId: "",
       storyPoints: [1, 2, 3, 5, 8, 13],
       verbose: false,
       deleteArtifacts: false,

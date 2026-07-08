@@ -198,6 +198,15 @@ export function SettingsForm({ settings, onChange, disabled }: SettingsFormProps
                 />
               </Field>
 
+              <Field label="Story points field customfield id (optional)">
+                <Input
+                  value={settings.storyPointsFieldId}
+                  disabled={disabled}
+                  onChange={(e) => onChange({ storyPointsFieldId: e.target.value.trim() })}
+                  placeholder="e.g. customfield_10042 (leave blank to match by name)"
+                />
+              </Field>
+
               <Field label="Story points (comma-separated)">
                 <Input
                   value={settings.storyPoints}

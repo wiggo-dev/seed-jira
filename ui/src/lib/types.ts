@@ -20,6 +20,7 @@ export interface Settings {
   products: string;
   productsFieldId: string;
   teams: string;
+  storyPointsFieldId: string;
   storyPoints: string;
   maxCommentsPerIssue: number;
   maxWorklogsPerIssue: number;

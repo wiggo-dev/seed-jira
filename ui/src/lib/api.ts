@@ -15,6 +15,7 @@ export const defaultSettings: Settings = {
   products: "",
   productsFieldId: "",
   teams: "",
+  storyPointsFieldId: "",
   storyPoints: "1,2,3,5,8,13",
   maxCommentsPerIssue: 4,
   maxWorklogsPerIssue: 6,
@@ -52,6 +53,7 @@ export function mergeDefaults(data: DefaultsResponse): Settings {
     reassignProb: d.reassignProb ?? defaultSettings.reassignProb,
     epicChurnProb: d.epicChurnProb ?? defaultSettings.epicChurnProb,
     productsFieldId: d.productsFieldId ?? defaultSettings.productsFieldId,
+    storyPointsFieldId: d.storyPointsFieldId ?? defaultSettings.storyPointsFieldId,
     storyPoints: Array.isArray(d.storyPoints)
       ? d.storyPoints.join(",")
       : defaultSettings.storyPoints,
@@ -79,6 +81,7 @@ export function settingsToPayload(settings: Settings, mode: RunMode) {
     boardName: settings.boardName || undefined,
     boardId: settings.boardId ? Number(settings.boardId) : undefined,
     productsFieldId: settings.productsFieldId || undefined,
+    storyPointsFieldId: settings.storyPointsFieldId || undefined,
     numPIs: settings.numPIs,
     sprintsPerPI: settings.sprintsPerPI,
     epicsPerPI: settings.epicsPerPI,
